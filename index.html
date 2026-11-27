@@ -10,8 +10,8 @@
 <meta property="og:description" content="Saturday, 5 December 2026 · 4:30 PM · Alsaray Restaurant">
 <!-- Preview image: must match the Hosting site this page is deployed to -->
 <meta property="og:image" content="https://aqt-anniversary-2026.web.app/og.jpg">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
+<meta property="og:image:width" content="500">
+<meta property="og:image:height" content="300">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -281,39 +281,72 @@ const firebaseConfig = {
 };
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
+const COLLECTION = 'rsvp_aqt_anniversary_2026';
+const SAVED_KEY = 'aqt_rsvp_2026';
 const form = document.getElementById('rsvp');
 const msg = document.getElementById('msg');
 const send = document.getElementById('send');
+const done = document.getElementById('done');
+const doneTitle = done.querySelector('h3');
+const doneText = document.getElementById('done-text');
 
 let db = null;
 try { db = getFirestore(initializeApp(firebaseConfig)); } catch (e) { console.error(e); }
 
+// One RSVP per name: the name becomes the document id, so a second entry with the same name
+// is refused by Firestore (your rules allow create, not update).
+const nameKey = n => n.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/ /g, '_').slice(0, 120);
+
+const showDone = (title, text) => {
+  form.hidden = true;
+  doneTitle.textContent = title;
+  doneText.textContent = text;
+  done.hidden = false;
+};
+
+// Same device / browser already answered → check Firebase that the reply still exists.
+// If you delete it in Firebase, the form comes back and the guest can register again.
+(async () => {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(SAVED_KEY) || 'null'); } catch (e) {}
+  if (!saved || !saved.name || !db) return;
+  try {
+    const snap = await getDoc(doc(db, COLLECTION, saved.key || nameKey(saved.name)));
+    if (snap.exists()) {
+      showDone('Thank you, ' + saved.name + '!', 'Your RSVP has already been received.');
+    } else {
+      localStorage.removeItem(SAVED_KEY);
+    }
+  } catch (e) { console.error(e); }
+})();
+
+const already = name => showDone('Already received', 'An RSVP under the name “' + name + '” has already been received. Thank you!');
+
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (form.website.value) return; // spam trap
-  const name = form.fullname.value.trim();
-  form.fullname.setAttribute('aria-invalid', !name);
-  if (!name) { msg.textContent = 'Please enter your full name.'; form.fullname.focus(); return; }
+  const name = form.fullname.value.trim().replace(/\s+/g, ' ');
+  const key = nameKey(name);
+  form.fullname.setAttribute('aria-invalid', !key);
+  if (!key) { msg.textContent = 'Please enter your full name.'; form.fullname.focus(); return; }
   if (!db) { msg.textContent = 'RSVP is not available right now. Please try again later.'; return; }
 
   const attending = form.attending.value === 'yes';
   send.disabled = true; send.textContent = 'Sending…'; msg.textContent = '';
+  const ref = doc(db, COLLECTION, key);
   try {
-    await addDoc(collection(db, 'rsvp_aqt_anniversary_2026'), {
-      name,
-      attending,
-      createdAt: serverTimestamp()
-    });
-    form.hidden = true;
-    document.getElementById('done-text').textContent = attending
+    const snap = await getDoc(ref);
+    if (snap.exists()) { already(name); return; }
+    await setDoc(ref, { name, attending, createdAt: serverTimestamp() });
+    try { localStorage.setItem(SAVED_KEY, JSON.stringify({ name, key, attending })); } catch (e) {}
+    showDone('Thank you!', attending
       ? 'Your RSVP has been received. We look forward to celebrating with you.'
-      : 'Thank you for letting us know. You will be missed.';
-    const done = document.getElementById('done');
-    done.hidden = false;
+      : 'Thank you for letting us know. You will be missed.');
     done.scrollIntoView({ behavior: 'smooth', block: 'center' });
   } catch (err) {
+    if (err && err.code === 'permission-denied') { already(name); return; }
     console.error(err);
     msg.textContent = 'Something went wrong. Please try again.';
     send.disabled = false; send.textContent = 'Send RSVP';
