@@ -86,6 +86,13 @@ p{max-width:500px;margin:16px auto}
 .choice label{display:flex;align-items:center;gap:10px;min-height:44px;margin:0;color:var(--ink);font-size:16px;cursor:pointer}
 .choice input{width:20px;height:20px;accent-color:#C6A15B}
 .rsvp .btn{width:100%;margin:6px 0 0}
+.stepper{display:flex;align-items:center;gap:10px}
+.stepper input{width:80px!important;text-align:center;font-weight:600;font-size:18px!important;-moz-appearance:textfield}
+.stepper input::-webkit-outer-spin-button,.stepper input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.step{width:46px;height:46px;border-radius:50%;border:1px solid var(--gold);background:transparent;color:var(--gold);font:600 22px/1 'Inter',sans-serif;cursor:pointer}
+.step:hover{background:rgba(228,194,124,.12)}.step:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.hint-txt{display:block;margin-top:6px;color:var(--mute);font-size:13px}
+#guests-row[hidden]{display:none}
 .hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
 .done{max-width:520px;margin:28px auto 0;padding:28px;border:1px solid var(--gold);border-radius:14px}
 
@@ -212,6 +219,14 @@ figcaption span{color:var(--gold)}
 <label><input type="radio" name="attending" value="no"> Sorry, I can’t make it</label>
 </div>
 </fieldset>
+<div class="row" id="guests-row">
+<label for="f-guests">How many people are attending, including you?</label>
+<div class="stepper">
+<button type="button" class="step" id="g-minus" aria-label="Fewer people">−</button>
+<input id="f-guests" name="guests" type="number" inputmode="numeric" min="1" max="10" value="1">
+<button type="button" class="step" id="g-plus" aria-label="More people">+</button>
+</div>
+</div>
 <input type="text" name="website" id="f-hp" tabindex="-1" autocomplete="off" class="hp" aria-hidden="true">
 <button class="btn solid" id="send" type="submit">Send RSVP</button>
 <p class="note" id="msg" role="status" aria-live="polite"></p>
@@ -266,6 +281,14 @@ openBtn.addEventListener('click',()=>{
 const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('visible');io.unobserve(e.target);}}),{threshold:.1});
 document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
 
+
+// guest count stepper (works even before Firebase loads)
+const rsvpForm=document.getElementById('rsvp'),gIn=document.getElementById('f-guests'),gRow=document.getElementById('guests-row');
+const cg=v=>Math.min(10,Math.max(1,parseInt(v,10)||1));
+document.getElementById('g-minus').addEventListener('click',()=>{gIn.value=cg(+gIn.value-1);});
+document.getElementById('g-plus').addEventListener('click',()=>{gIn.value=cg(+gIn.value+1);});
+gIn.addEventListener('change',()=>{gIn.value=cg(gIn.value);});
+rsvpForm.addEventListener('change',e=>{if(e.target.name==='attending')gRow.hidden=rsvpForm.attending.value!=='yes';});
 const isApple=/iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
 document.getElementById('cal').addEventListener('click',e=>{
   if(!isApple)return; // others: the link opens Google Calendar
@@ -305,6 +328,8 @@ const send = document.getElementById('send');
 const done = document.getElementById('done');
 const doneTitle = done.querySelector('h3');
 const doneText = document.getElementById('done-text');
+const guestsIn = document.getElementById('f-guests');
+const clampG = v => Math.min(10, Math.max(1, parseInt(v, 10) || 1));
 
 let db = null;
 try { db = getFirestore(initializeApp(firebaseConfig)); } catch (e) { console.error(e); }
@@ -353,10 +378,11 @@ form.addEventListener('submit', async (e) => {
   try {
     const snap = await getDoc(ref);
     if (snap.exists()) { already(name); return; }
-    await setDoc(ref, { name, attending, createdAt: serverTimestamp() });
-    try { localStorage.setItem(SAVED_KEY, JSON.stringify({ name, key, attending })); } catch (e) {}
+    const guests = attending ? clampG(guestsIn.value) : 0;
+    await setDoc(ref, { name, attending, guests, createdAt: serverTimestamp() });
+    try { localStorage.setItem(SAVED_KEY, JSON.stringify({ name, key, attending, guests })); } catch (e) {}
     showDone('Thank you!', attending
-      ? 'Your RSVP has been received. We look forward to celebrating with you.'
+      ? (guests > 1 ? 'Your RSVP for ' + guests + ' people has been received. We look forward to celebrating with you.' : 'Your RSVP has been received. We look forward to celebrating with you.')
       : 'Thank you for letting us know. You will be missed.');
     done.scrollIntoView({ behavior: 'smooth', block: 'center' });
   } catch (err) {
